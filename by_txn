@@ -13,19 +13,15 @@
 --CREATE VIEW gtfs_test.v_most_current_routes_per_feed AS (
 --	WITH gtfs_data AS (
 --		SELECT DISTINCT
---			f.feed_id
---			, r.route_id
---			, r.route_short_name
---			, r.route_long_name
---			, f.agency_id AS trac_agency_id
---			, min(c.start_date) start_date
---			, max(c.end_date) end_date
---			, ROW_NUMBER() OVER (
---				PARTITION BY
---					f.agency_id
---			 		, r.route_id
---			 		, min(c.start_date)
---			 		, max(c.end_date)
+--			f.feed_id, 
+--			r.route_id, 
+--			r.route_short_name,
+--			r.route_long_name,
+--			f.agency_id AS trac_agency_id,
+--			min(c.start_date) start_date,
+--			max(c.end_date) end_date,
+--			ROW_NUMBER() OVER (
+--			 	PARTITION BY f.agency_id, r.route_id, min(c.start_date), max(c.end_date)
 --			 	ORDER BY f.feed_id DESC
 --			) AS route_rank
 --	    FROM _test.real_transitland_routes AS r 
@@ -33,233 +29,247 @@
 --	    	ON r.feed_id = f.feed_id
 --	    JOIN _test.real_transitland_trips AS t
 --	    	ON t.feed_id = r.feed_id
---	    	AND t.route_id = r.route_id
+--	    		AND t.route_id = r.route_id
 --	    JOIN _test.real_transitland_calendar AS c
 --	    	ON c.feed_id = t.feed_id
---	    	AND c.service_id = t.service_id
---	    GROUP BY 
---	    	r.route_id
---	    	, f.feed_id 
---	    	, f.agency_id
---	    	, r.route_short_name
---	    	, r.route_long_name 
+--	    		AND c.service_id = t.service_id
+--	    GROUP BY r.route_id, f.feed_id, f.agency_id, r.route_short_name, r.route_long_name 
 --	)
 --	SELECT 
---		feed_id
---		, route_id
---		, route_short_name
---		, route_long_name
---		, trac_agency_id
---		, start_date
---		, end_date
---		, route_rank
+--		feed_id,
+--		route_id,
+--		route_short_name,
+--		route_long_name,
+--		trac_agency_id,
+--		start_date,
+--		end_date,
+--		route_rank
 --	FROM gtfs_data
 --	WHERE route_rank = 1
 --);
---
---
---
+
+
+--DROP VIEW gtfs_test.v_gtfs_trip_directions
 --
 --CREATE VIEW gtfs_test.v_gtfs_trip_directions AS (
 --	SELECT DISTINCT 
---		r.feed_id
---		, r.route_id
---		, r.trac_agency_id
---		, t.shape_id
---		, t.trip_id
---		, t.service_id
---		, t.direction_id
---		, FIRST_VALUE(st.arrival_time) OVER (
---			PARTITION BY 
---				r.feed_id
---				, r.route_id
---				, r.trac_agency_id
---				, t.shape_id
---				, t.trip_id
---			ORDER BY st.stop_sequence ) AS first_stop_time
---		, LAST_VALUE(st.departure_time) OVER (
---			PARTITION BY 
---				r.feed_id
---				, r.route_id
---				, r.trac_agency_id
---				, t.shape_id
---				, t.trip_id
---			ORDER BY st.stop_sequence ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS last_stop_time
---		, ARRAY_AGG(st.stop_id) OVER (
---			PARTITION BY 
---				r.feed_id
---				, r.route_id
---				, r.trac_agency_id
---				, t.shape_id
---				, t.trip_id
---			ORDER BY st.stop_sequence ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS stops_arr
---		, array[
+--		r.feed_id, 
+--		r.route_id, 
+--		r.trac_agency_id, 
+--		t.shape_id, 
+--		t.trip_id, 
+--		t.service_id, 
+--		t.direction_id, 
+--		FIRST_VALUE(st.arrival_time) OVER (
+--			PARTITION BY r.feed_id, r.route_id, r.trac_agency_id, t.shape_id, t.trip_id
+--			ORDER BY st.stop_sequence 
+--		) AS first_stop_time, 
+--		LAST_VALUE(st.departure_time) OVER (
+--			PARTITION BY r.feed_id, r.route_id, r.trac_agency_id, t.shape_id, t.trip_id
+--			ORDER BY st.stop_sequence ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+--		) AS last_stop_time,
+--		ARRAY_AGG(st.stop_id) OVER (
+--			PARTITION BY r.feed_id, r.route_id, r.trac_agency_id, t.shape_id, t.trip_id
+--			ORDER BY st.stop_sequence ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+--		) AS stops_arr, 
+--		array[
 --			CASE
 --				WHEN (
 --					LAST_VALUE(s.stop_lat::numeric) OVER (
---						PARTITION BY 
---							r.feed_id
---							, r.route_id
---							, r.trac_agency_id
---							, t.shape_id
---							, t.trip_id
---						ORDER BY st.stop_sequence ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+--						PARTITION BY r.feed_id, r.route_id, r.trac_agency_id, t.shape_id, t.trip_id
+--						ORDER BY st.stop_sequence ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+--					)
 --					- FIRST_VALUE(s.stop_lat::numeric) OVER (
---						PARTITION BY 
---							r.feed_id
---							, r.route_id
---							, r.trac_agency_id
---							, t.shape_id
---							, t.trip_id
+--						PARTITION BY r.feed_id, r.route_id, r.trac_agency_id, t.shape_id, t.trip_id
 --						ORDER BY st.stop_sequence) -- delta-y
 --				) > 0
 --					THEN 4::INT2 -- North
 --				ELSE 5::INT2 -- South
---			END
---			, CASE
+--			END, 
+--			CASE
 --				WHEN (
 --					LAST_VALUE(s.stop_lon::numeric) OVER (
---						PARTITION BY 
---							r.feed_id
---							, r.route_id
---							, r.trac_agency_id
---							, t.shape_id
---							, t.trip_id
---						ORDER BY st.stop_sequence ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+--						PARTITION BY r.feed_id, r.route_id, r.trac_agency_id, t.shape_id, t.trip_id
+--						ORDER BY st.stop_sequence ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+--					)
 --					- FIRST_VALUE(s.stop_lon::numeric) OVER (
---						PARTITION BY 
---							r.feed_id
---							, r.route_id
---							, r.trac_agency_id
---							, t.shape_id
---							, t.trip_id
---						ORDER BY st.stop_sequence) -- delta-x
+--						PARTITION BY r.feed_id, r.route_id, r.trac_agency_id, t.shape_id, t.trip_id
+--						ORDER BY st.stop_sequence
+--					) -- delta-x
 --				) > 0
 --					THEN 6::INT2 -- East
 --				ELSE 7::INT2 -- West
 --			END 
---		] AS alt_direction_id
---		, monday
---		, tuesday
---		, wednesday
---		, thursday
---		, friday
---		, saturday
---		, sunday
+--		] AS alt_direction_id, 
+--		monday, 
+--		tuesday, 
+--		wednesday, 
+--		thursday, 
+--		friday, 
+--		saturday, 
+--		sunday
 --	FROM gtfs_test.v_most_current_routes_per_feed AS r -- this IS the TABLE we need FOR the route information
 --	JOIN  _test.real_transitland_trips AS t
---		ON  r.feed_id = t.feed_id
---		AND t.route_id = r.route_id
+--		ON t.feed_id = r.feed_id
+--			AND t.route_id = r.route_id
 --	JOIN _test.real_transitland_stop_times AS st
 --		ON st.feed_id = r.feed_id
---		AND st.trip_id = t.trip_id
+--			AND st.trip_id = t.trip_id
 --	JOIN _test.real_transitland_stops AS s
 --		ON s.feed_id = r.feed_id
---		AND s.stop_id = st.stop_id
+--			AND s.stop_id = st.stop_id
 --	LEFT JOIN _test.real_transitland_calendar AS c
---		ON t.feed_id = c.feed_id 
---		AND c.service_id = t.service_id
+--		ON c.feed_id = t.feed_id
+--			AND c.service_id = t.service_id
 --);
---
---
---
---
+
+
+--DROP VIEW gtfs_test.v_gtfs_trip_directions_corrected
+
+--CREATE VIEW gtfs_test.v_gtfs_trip_directions_corrected AS (
+--	SELECT
+--		feed_id, 
+--		route_id, 
+--		trac_agency_id, 
+--		shape_id, 
+--		trip_id, 
+--		service_id, 
+--		direction_id, 
+--		first_stop_time, 
+--		last_stop_time,
+--		stops_arr, 
+--		CASE 
+--            WHEN trac_agency_id = 6
+--                THEN array_append(
+--                    CASE
+--                        WHEN direction_id = 1 
+--                            THEN
+--                                CASE 
+--                                    WHEN ARRAY[4, 6]::INT2[] <@ alt_direction_id
+--                                        THEN alt_direction_id
+--                                    WHEN ARRAY[5]::INT2[] <@ alt_direction_id
+--                                        THEN array_remove(alt_direction_id, 5)::INT2[]
+--                                    WHEN ARRAY[7]::INT2[] <@ alt_direction_id
+--                                        THEN array_remove(alt_direction_id, 7)::INT2[]
+--                                    ELSE alt_direction_id
+--                                END
+--                        WHEN direction_id = 0 
+--                            THEN 
+--                                CASE 
+--                                    WHEN ARRAY[5, 7]::INT2[] <@ alt_direction_id
+--                                        THEN alt_direction_id
+--                                    WHEN ARRAY[4]::INT2[] <@ alt_direction_id
+--                                        THEN array_remove(alt_direction_id, 4)::INT2[]
+--                                    WHEN ARRAY[6]::INT2[] <@ alt_direction_id
+--                                        THEN array_remove(alt_direction_id, 6)::INT2[]
+--                                    ELSE alt_direction_id
+--                                END
+--                    END::INT2[],
+--                    CASE
+--                        WHEN direction_id = 1 
+--                            THEN 1::INT2
+--                        WHEN direction_id = 0 
+--                            THEN 2::INT2
+--                    END
+--                )::INT2[]
+--            ELSE alt_direction_id
+--        END AS alt_direction_id,
+--        monday, 
+--        tuesday, 
+--        wednesday, 
+--        thursday, 
+--        friday, 
+--        saturday, 
+--        sunday
+--    FROM gtfs_test.v_gtfs_trip_directions
+--);
+
+
+--DROP VIEW gtfs_test.v_gtfs_trip_stop_sequence
+
 --CREATE VIEW gtfs_test.v_gtfs_trip_stop_sequence AS (
 --	SELECT DISTINCT 
---		t.feed_id
---		, t.route_id
---		, t.trac_agency_id
---		, t.trip_id
---		, t.shape_id
---		, t.direction_id
---		, t.alt_direction_id
---		, c.monday
---		, c.tuesday
---		, c.wednesday
---		, c.thursday
---		, c.friday
---		, c.saturday
---		, c.sunday
---		, st.arrival_time
---		, st.departure_time
---		, st.stop_id
---		, st.stop_sequence
---		, s.stop_location
---		, r.start_date
---		, r.end_date
---	FROM gtfs_test.v_gtfs_trip_directions AS t
---	JOIN gtfs_test.v_most_current_routes_per_feed AS r
+--		t.feed_id, 
+--		t.route_id, 
+--		t.trac_agency_id, 
+--		t.trip_id, 
+--		t.shape_id, 
+--		t.direction_id, 
+--		t.alt_direction_id, 
+--		c.monday, 
+--		c.tuesday, 
+--		c.wednesday, 
+--		c.thursday, 
+--		c.friday, 
+--		c.saturday, 
+--		c.sunday, 
+--		st.arrival_time, 
+--		st.departure_time, 
+--		st.stop_id, 
+--		st.stop_sequence, 
+--		s.stop_location, 
+--		r.start_date, 
+--		r.end_date
+--	FROM gtfs_test.v_gtfs_trip_directions_corrected AS t
+--	JOIN _test.latest_gtfs_feeds_20240413 AS r
 --		ON r.feed_id = t.feed_id 
---		AND r.route_id = t.route_id
+--			AND r.route_id = t.route_id
 --	JOIN _test.real_transitland_stop_times AS st
 --		ON st.feed_id = t.feed_id
---		AND st.trip_id = t.trip_id
+--			AND st.trip_id = t.trip_id
 --	JOIN _test.real_transitland_stops AS s
 --		ON s.feed_id = t.feed_id
---		AND s.stop_id = st.stop_id
+--			AND s.stop_id = st.stop_id
 --	LEFT JOIN _test.real_transitland_calendar AS c
---		ON t.feed_id = c.feed_id 
---		AND c.service_id = t.service_id
---	ORDER BY 
---		t.feed_id 
---		, t.trac_agency_id
---		, t.route_id 
---		, t.trip_id 
---		, t.shape_id 
---		, st.stop_sequence ASC
+--		ON c.feed_id = t.feed_id
+--			AND c.service_id = t.service_id
+--	ORDER BY t.feed_id, t.trac_agency_id, t.route_id, t.trip_id, t.shape_id, st.stop_sequence ASC
 --);
---
---
---
+
+
+
+
 --CREATE VIEW gtfs_test.v_gtfs_service_exceptions AS (
 --	SELECT DISTINCT 
---		r.feed_id
---		, r.route_id
---		, r.trac_agency_id
---		, t.trip_id
---		, cd.date
---		, cd.exception_type
+--		r.feed_id, 
+--		r.route_id, 
+--		r.trac_agency_id, 
+--		t.trip_id, 
+--		cd.date, 
+--		cd.exception_type
 --	FROM gtfs_test.v_most_current_routes_per_feed AS r -- this IS the TABLE we need FOR the route information
 --	JOIN  _test.real_transitland_trips AS t
---		ON  r.feed_id = t.feed_id
---		AND t.route_id = r.route_id
+--		ON  t.feed_id = r.feed_id
+--			AND t.route_id = r.route_id
 --	JOIN _test.real_transitland_calendar AS c
---		ON t.feed_id = c.feed_id 
---		AND c.service_id = t.service_id
+--		ON c.feed_id  = t.feed_id
+--			AND c.service_id = t.service_id
 --	JOIN _test.real_transitland_calendar_dates AS cd
---		ON c.feed_id = cd.feed_id 
---		AND c.service_id = cd.service_id
---	ORDER BY 
---		r.feed_id
---		, r.trac_agency_id
---		, r.route_id
---		, t.trip_id ASC
---); -- 512,439
---
---
---
---
---
---
---
---
---
---
---CREATE VIEW gtfs_test.v_corrected_orca_directions AS (
+--		ON cd.feed_id = c.feed_id  
+--			AND cd.service_id = c.service_id 
+--	ORDER BY r.feed_id, r.trac_agency_id, r.route_id, t.trip_id ASC
+--);
+
+
+
+-- UNUSED?
+--CREATE VIEW gtfs_test.v_corrected_orca_directions  AS (
 --	SELECT 
 --		txn_id, 
 --		corrected_direction_id AS direction_id
 --	FROM (
 --		SELECT  
---			b1.*
---			, b2.direction_id AS corrected_direction_id
---			, ROW_NUMBER() OVER (
+--			b1.*, 
+--			b2.stop_code, 
+--			b2.device_location, 
+--			b2.direction_id AS corrected_direction_id, 
+--			ROW_NUMBER() OVER (
 --				PARTITION BY b1.txn_id
 --				ORDER BY abs_interval(b1.device_dtm_pacific - b2.device_dtm_pacific)
---			) AS ranked
---			, abs_interval(b1.device_dtm_pacific - b2.device_dtm_pacific) AS time_difference
---		FROM gtfs_test.v_orca_with_more_ids AS b1
---		JOIN gtfs_test.v_orca_with_more_ids AS b2
+--			) AS ranked, 
+--			abs_interval(b1.device_dtm_pacific - b2.device_dtm_pacific) AS time_difference
+--		FROM _test.boarding_april23 AS b1
+--		JOIN _test.boarding_april23 AS b2
 --			ON b1.route_number = b2.route_number 
 --			AND b1.device_id = b2.device_id -- same tapping device
 --			AND b1.coach_number = b2.coach_number -- same vehicle
@@ -269,8 +279,6 @@
 --	) ranked_data
 --	WHERE ranked = 1 AND time_difference <= '00:30:00'
 --);
-
-
 
 
 
@@ -323,32 +331,33 @@ BEGIN
 	
 	
 	SELECT 
-		orca.*
-		, EXTRACT(DOW FROM orca.business_date) AS txn_dow
-		, CASE 
+		orca.*,
+		EXTRACT(DOW FROM orca.business_date) AS txn_dow,
+		CASE 
 			WHEN date_trunc('day', orca.device_dtm_pacific) > orca.business_date
 				THEN TO_CHAR(orca.device_dtm_pacific, 'HH24:MI:SS')::INTERVAL + '24 hours'
 			ELSE TO_CHAR(orca.device_dtm_pacific, 'HH24:MI:SS')::INTERVAL
 		END AS device_dtm_interval
-    INTO  _orca_txn_rec
-   	FROM  orca.v_boardings AS orca
-    WHERE  orca.txn_id = _txn_id;
+    INTO _orca_txn_rec
+   	FROM orca.v_boardings AS orca
+    WHERE orca.txn_id = _txn_id;
 
-   
+
    	_orca_coach_number = _orca_txn_rec.coach_number;
 	_orca_txn_dow = _orca_txn_rec.txn_dow;
 	_orca_device_dtm_interval = _orca_txn_rec.device_dtm_interval;
 
 
-	
+
 
 
 	WITH get_gtfs_rec AS (
 		SELECT   
-			gtfs. *
-			, ROW_NUMBER() OVER (
+			gtfs. *,
+			ROW_NUMBER() OVER (
 				PARTITION BY orca.txn_id
-				ORDER BY gtfs.feed_id DESC ) AS latest_gtfs
+				ORDER BY gtfs.feed_id DESC 
+			) AS latest_gtfs
 		FROM orca.v_boardings AS orca-- orca
 		LEFT JOIN trac.route_name_lookup AS lookup
 			ON orca.route_number = lookup.route_number
@@ -380,23 +389,19 @@ BEGIN
 
 
 
-
-
-
-
 	WITH get_correct_direction_id AS (
 		SELECT 
 			txn_id, 
 			corrected_direction_id
 		FROM (
 			SELECT  
-				b1.*
-				, b2.direction_id AS corrected_direction_id
-				, ROW_NUMBER() OVER (
+				b1.*,
+				b2.direction_id AS corrected_direction_id,
+				ROW_NUMBER() OVER (
 					PARTITION BY b1.txn_id
 					ORDER BY abs_interval(b1.device_dtm_pacific - b2.device_dtm_pacific)
-				) AS ranked
-				, abs_interval(b1.device_dtm_pacific - b2.device_dtm_pacific) AS time_difference
+				) AS ranked,
+				abs_interval(b1.device_dtm_pacific - b2.device_dtm_pacific) AS time_difference
 			FROM orca.v_boardings AS b1
 			JOIN orca.v_boardings AS b2
 				ON b1.route_number = b2.route_number 
@@ -425,8 +430,8 @@ BEGIN
 
 	WITH get_avl_rec AS (
 		SELECT 
-			avl.*
-			, CASE 
+			avl.*,
+			CASE 
 				WHEN orca.route_number = avl.route_id
 					THEN 
 						CASE
@@ -450,8 +455,8 @@ BEGIN
 						END
 				WHEN avl.route_id IS NULL
 					THEN 3
-			END AS check_code
-			, ROW_NUMBER () OVER (
+			END AS check_code,
+			ROW_NUMBER () OVER (
 				PARTITION BY orca.txn_id
 				ORDER BY (
 					CASE 
@@ -478,8 +483,8 @@ BEGIN
 								END
 						WHEN avl.route_id IS NULL -- WHERE there IS NO AVL match
 							THEN 3
-					END 
-					, abs_interval(avl.departure_dtm_pacific - orca.device_dtm_pacific) -- orca_avl_time_interval 
+					END,
+					abs_interval(avl.departure_dtm_pacific - orca.device_dtm_pacific) -- orca_avl_time_interval 
 				)
 			) AS ranked_avl
 		FROM orca.v_boardings AS orca
@@ -580,7 +585,7 @@ BEGIN
 				AND exc.trac_agency_id = _gtfs_rec.trac_agency_id
 				AND exc.route_id = _gtfs_rec.route_id
 				AND exc.feed_id = _gtfs_rec.feed_id
-			LEFT JOIN gtfs_test.v_gtfs_trip_directions AS gtfs_td
+			LEFT JOIN gtfs_test.v_gtfs_trip_directions_corrected AS gtfs_td
 	    		ON 	_gtfs_rec.feed_id = gtfs_td.feed_id
 	    		AND _gtfs_rec.route_id = gtfs_td.route_id
 	    		AND _gtfs_rec.trac_agency_id = gtfs_td.trac_agency_id
@@ -731,8 +736,10 @@ BEGIN
 					WHEN orca.device_mode_id = 10 OR orca.device_mode_id = 11 -- lightrail OR sounder
 					   	THEN
 					   		gtfs.departure_time 
-					   		BETWEEN _orca_txn_rec.device_dtm_interval - INTERVAL '1 minutes' -- AFTER tap, allow upto 1 min TO GET TO the lightrail/sounder BY stairs/elevators
-					   		AND _orca_txn_rec.device_dtm_interval + INTERVAL '45 minutes' -- AFTER tap, might need TO wait upto 30 mins BEFORE the lightrail/sounder depart
+					   		-- AFTER tap, allow upto 1 min TO GET TO the lightrail/sounder BY stairs/elevators
+					   		BETWEEN _orca_txn_rec.device_dtm_interval - INTERVAL '1 minutes' 
+					   		-- AFTER tap, might need TO wait upto 30 mins BEFORE the lightrail/sounder depart
+					   		AND _orca_txn_rec.device_dtm_interval + INTERVAL '45 minutes' 
 					ELSE -- bus
 					   	gtfs.departure_time 
 					   	BETWEEN _orca_txn_rec.device_dtm_interval - INTERVAL '2 minutes' -- bus arriving 2 minutes early from the schedule
@@ -783,7 +790,7 @@ BEGIN
 	            		OR (gtfs.saturday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)  
 	            		OR (gtfs.saturday IS NULL)
 		  	END
---		WHERE txn_id = _txn_id
+		WHERE txn_id = _txn_id
 	)
 	SELECT 
 		gtfs_trip_id,
@@ -1016,13 +1023,19 @@ BEGIN
 	
 
 
-
+	INSERT INTO gtfs_test.dummy VALUES (
+		_trac_check_code,
+		_trac_trip_id,
+		_trac_time_difference,
+		_trac_stop_id,
+		_trac_stop_location
+	);
 
 	INSERT INTO gtfs_test.test_final_table VALUES (
 		_txn_id, 
 		_orca_coach_number, 
 		_gtfs_feed_id, 
-		_gtfs_route_id,
+		_trac_time_difference,--_gtfs_route_id,
 		_final_trip_id,
 		_trac_agency_id, 
 		_avl_route_id, 
@@ -1059,7 +1072,8 @@ $$;
 			-- CONDITIONS: 
 				-- orca device location or stop code not null
 
-		-- 3.) for all trips in a route for gtfs data, identify cardinal direction to use over orca's direction_id, append service day data from gtfs calendar
+		-- 3.) for all trips in a route for gtfs data, identify cardinal direction to use over orca's direction_id, append service day data from gtfs 
+				-- calendar
 			-- USING:
 				-- view from step 1, gtfs trips, stops, stop_times, and calendar
 
@@ -1140,9 +1154,17 @@ $$;
 			-- use process written on paper
 
 
-
-
-
+--DROP TABLE gtfs_test.dummy
+--
+--CREATE TABLE gtfs_test.dummy (
+--	_trac_check_code INT,
+--	_trac_trip_id TEXT,
+--	_trac_time_difference INTERVAL,
+--	_trac_stop_id TEXT,
+--	_trac_stop_location geometry
+--);
+--
+--SELECT * FROM gtfs_test.dummy
 
 
 --CREATE TABLE gtfs_test.test_final_table(
@@ -1170,16 +1192,16 @@ $$;
 
 
 
--- CALL gtfs_test.do_a_thing(200905504);
--- CALL gtfs_test.do_a_thing(213267216);
--- CALL gtfs_test.do_a_thing(211497640);
--- CALL gtfs_test.do_a_thing(196642878);
--- CALL gtfs_test.do_a_thing(209454366);
--- CALL gtfs_test.do_a_thing(200910058);
--- CALL gtfs_test.do_a_thing(211634660);
--- CALL gtfs_test.do_a_thing(202337964);
--- CALL gtfs_test.do_a_thing(210066976);
--- CALL gtfs_test.do_a_thing(213678682);
+-- CALL gtfs_test.do_a_thing(209009706);
+-- CALL gtfs_test.do_a_thing(210597644);
+-- CALL gtfs_test.do_a_thing(205860430);
+-- CALL gtfs_test.do_a_thing(209287826);
+-- CALL gtfs_test.do_a_thing(209799166);
+-- CALL gtfs_test.do_a_thing(206290632);
+-- CALL gtfs_test.do_a_thing(203434032);
+-- CALL gtfs_test.do_a_thing(213290334);
+-- CALL gtfs_test.do_a_thing(213907462);
+-- CALL gtfs_test.do_a_thing(200595486);
 
 
 -- SELECT * FROM gtfs_test.test_final_table;
