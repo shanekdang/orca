@@ -6,7 +6,7 @@
 
 -- CREATE VIEWS
 
-
+--DROP VIEW gtfs_test.v_gtfs_trip_directions_corrected
 --DROP VIEW gtfs_test.v_corrected_orca_directions
 --DROP VIEW gtfs_test.v_gtfs_service_exceptions
 --DROP VIEW gtfs_test.v_gtfs_trip_stop_sequence
@@ -18,7 +18,7 @@
 -- list of most up-to-date and date-unique gtfs route data 
     -- "up-to-date" and "date-unique" meaning:
         -- routes of the same route_id, trac_agency_id, start_date, and end_date are ranked by feed_id
-        -- the route data pertaining to the highest feed_id (larger number) is chosen as it is latest data produced
+        -- the route data pertaining to the highest feed_id (larger number) is chosen as it is "latest"/most updated data produced
     -- this is to nullify processing outdated route data
 --CREATE VIEW gtfs_test.v_most_current_routes_with_associated_feed AS (
 --    WITH gtfs_data AS (
@@ -112,12 +112,12 @@
 --                ELSE 7::INT2 -- West (IF THEY ARE EQUAL THEY ARE ALSO LABELED west)
 --              END 
 --          ] AS alt_direction_id 
---        , c.monday, 
---        , c.tuesday, 
---        , c.wednesday, 
---        , c.thursday, 
---        , c.friday, 
---        , c.saturday, 
+--        , c.monday
+--        , c.tuesday
+--        , c.wednesday
+--        , c.thursday
+--        , c.friday
+--        , c.saturday
 --        , c.sunday
 --    FROM gtfs_test.v_most_current_routes_with_associated_feed AS r -- list of most up-to-date and date-unique gtfs route data
 --    JOIN  _test.real_transitland_trips AS t -- gtfs trips
@@ -135,7 +135,6 @@
 --);
 
 
---DROP VIEW gtfs_test.v_gtfs_trip_directions_corrected
 -- same view as trip_directions, but corrects the case of pierce transit (trac_agency_id = 6)
 -- add 1 or 2 for direction_id = 1 and 0, respectively 
     -- in GTFS:
@@ -310,11 +309,13 @@
 CREATE OR REPLACE PROCEDURE gtfs_test.do_a_thing(_txn_id BIGINT)
 LANGUAGE plpgsql AS $$
 DECLARE 
-
+    
+    -- records 
     _orca_txn_rec RECORD;
     _gtfs_rec RECORD;
     _avl_rec RECORD;
 
+    -- variables for final data to insert
     _gtfs_feed_id INT;
     _gtfs_route_id TEXT;
     _final_trip_id TEXT;
@@ -333,7 +334,7 @@ DECLARE
     _stop_note INT;
     _stop_location geometry(point, 32610);
 
-
+    -- variables needed to make comparisons and associations
     _orca_txn_dow INT; 
     _orca_device_dtm_interval INTERVAL;
     _orca_corrected_direction_id INT2;
@@ -345,15 +346,12 @@ DECLARE
     _trac_stop_location geometry(point, 32610);
     _gtfs_stop_location geometry(point, 32610);
 
-
-
 BEGIN
-    
     
     -- get orca txn data and store record
     SELECT 
           orca.*
-        , EXTRACT(DOW FROM orca.business_date) AS txn_dow,
+        , EXTRACT(DOW FROM orca.business_date) AS txn_dow
         , CASE  -- time INTERVAL CONVERSION; useful IN time expressions/equations later
             WHEN date_trunc('day', orca.device_dtm_pacific) > orca.business_date
                 THEN TO_CHAR(orca.device_dtm_pacific, 'HH24:MI:SS')::INTERVAL + '24 hours'
@@ -362,14 +360,11 @@ BEGIN
     INTO _orca_txn_rec
        FROM orca.v_boardings AS orca
     WHERE orca.txn_id = _txn_id;
-
    
     -- pull data from orca record into variables
     _orca_coach_number = _orca_txn_rec.coach_number;
     _orca_txn_dow = _orca_txn_rec.txn_dow;
     _orca_device_dtm_interval = _orca_txn_rec.device_dtm_interval;
-
-
 
     -- get gtfs data associated to orca txn and store record 
     WITH get_gtfs_rec AS (
@@ -400,13 +395,10 @@ BEGIN
     FROM get_gtfs_rec
     WHERE latest_gtfs = 1;
 
-
     -- pull gtfs data from record into variables
     _gtfs_feed_id = _gtfs_rec.feed_id;
     _gtfs_route_id = _gtfs_rec.route_id;
     _trac_agency_id = _gtfs_rec.trac_agency_id;
-
-
 
     -- creates orca data variable that corrects cases where direction_id = 3 (unknown)
     -- if txn has direction id 3, we take the direction id of the closest boarding that DOESNT have direction_id = 3 
@@ -443,29 +435,26 @@ BEGIN
     INTO _orca_corrected_direction_id
     FROM get_correct_direction_id;
 
-
-
     -- get avl data associated to orca txn and store record 
     -- check code depends on if orca and avl routes are the same and comparing orca and avl directions
     WITH d AS (
         SELECT
               avl.*
             , orca.txn_id
+            , abs_interval(avl.departure_dtm_pacific - orca.device_dtm_pacific) AS time_diff
             , CASE 
-                WHEN orca.route_number = avl.route_id 
-                    THEN -- same route  
-                CASE 
-                    WHEN COALESCE(_orca_corrected_direction_id, orca.direction_id) = avl.direction_id 
-                        THEN 1.1  -- everything IS good
-                    WHEN COALESCE(_orca_corrected_direction_id, orca.direction_id) = 3 
-                    AND avl.direction_id IS NOT NULL 
-                        THEN 1.2 -- UPDATE the orca direction WITH avl
-                    WHEN COALESCE(_orca_corrected_direction_id, orca.direction_id) != 3 
-                    AND COALESCE(_orca_corrected_direction_id, orca.direction_id) != avl.direction_id 
-                        THEN 1.3 -- need GTFS
-                    WHEN avl.direction_id IS NULL 
-                        THEN 1.4 -- need GTFS
-                END
+                WHEN orca.route_number = avl.route_id -- same route
+                    THEN   
+                        CASE 
+                            WHEN COALESCE(_orca_corrected_direction_id, orca.direction_id) = avl.direction_id 
+                                THEN 1.1  -- everything IS good
+                            WHEN COALESCE(_orca_corrected_direction_id, orca.direction_id) = 3 AND avl.direction_id IS NOT NULL 
+                                THEN 1.2 -- UPDATE the orca direction WITH avl
+                            WHEN COALESCE(_orca_corrected_direction_id, orca.direction_id) != 3 AND COALESCE(_orca_corrected_direction_id, orca.direction_id) != avl.direction_id 
+                                THEN 1.3 -- need GTFS
+                            WHEN avl.direction_id IS NULL 
+                                THEN 1.4 -- need GTFS
+                        END
                 WHEN orca.route_number != avl.route_id -- NOT same route 
                     THEN 
                         CASE 
@@ -482,13 +471,14 @@ BEGIN
                 AND avl.stop_id = orca.stop_code  -- same stop
                 AND abs_interval(avl.departure_dtm_pacific - orca.device_dtm_pacific) <= INTERVAL '5 minutes' -- WITHIN 5 min INTERVAL
             WHERE orca.txn_id = _txn_id
-    ), get_avl_rec AS (
+    )
+    , get_avl_rec AS (
         SELECT
               *
             , ROW_NUMBER() OVER (
                 PARTITION BY d.txn_id
-                ORDER BY d.check_code, abs_interval(avl.departure_dtm_pacific - orca.device_dtm_pacific)) AS ranked_avl -- orca_avl_time_interval 
-          FROM  d
+                ORDER BY d.check_code, d.time_diff) AS ranked_avl -- orca_avl_time_interval 
+          FROM d
     )
     SELECT *
     FROM get_avl_rec
@@ -502,84 +492,12 @@ BEGIN
     _avl_departure_dtm_pacific = _avl_rec.departure_dtm_pacific;
     _avl_check_code = _avl_rec.check_code;
 
-
---    WITH get_avl_rec AS (
---        SELECT 
---            avl.*,
---            CASE 
---                WHEN orca.route_number = avl.route_id -- same route
---                    THEN 
---                        CASE
---                            WHEN COALESCE(_orca_corrected_direction_id, orca.direction_id) = avl.direction_id
---                                THEN 1.1
---                            WHEN COALESCE(_orca_corrected_direction_id, orca.direction_id) = 3 
---                            AND avl.direction_id IS NOT NULL 
---                                THEN 1.2 
---                            WHEN COALESCE(_orca_corrected_direction_id, orca.direction_id) != 3 
---                            AND COALESCE(_orca_corrected_direction_id, orca.direction_id) != avl.direction_id
---                                THEN 1.3
---                            WHEN avl.direction_id IS NULL
---                                THEN 1.4
---                        END
---                WHEN orca.route_number != avl.route_id -- NOT same route
---                    THEN 
---                        CASE
---                            WHEN avl.direction_id IS NOT NULL
---                                THEN 2.1 -- BOTH orca AND avl direction exist, just aren't the same
---                            ELSE 2.2 -- orca direction EXISTS but avl does NOT 
---                        END
---                WHEN avl.route_id IS NULL
---                    THEN 3
---            END AS check_code,
---            ROW_NUMBER () OVER (
---                PARTITION BY orca.txn_id
---                ORDER BY (
---                    CASE 
---                        WHEN orca.route_number = avl.route_id -- WHEN the route number matched
---                            THEN 
---                                CASE
---                                    WHEN COALESCE(_orca_corrected_direction_id, orca.direction_id) = avl.direction_id
---                                        THEN 1.1 -- everything IS good
---                                    WHEN COALESCE(_orca_corrected_direction_id, orca.direction_id) = 3 
---                                    AND avl.direction_id IS NOT NULL 
---                                        THEN 1.2 -- UPDATE the orca direction WITH avl
---                                    WHEN COALESCE(_orca_corrected_direction_id, orca.direction_id) != 3 
---                                    AND COALESCE(_orca_corrected_direction_id, orca.direction_id) != avl.direction_id
---                                        THEN 1.3 -- need GTFS
---                                    WHEN avl.direction_id IS NULL
---                                        THEN 1.4 -- need GTFS
---                                END
---                        WHEN orca.route_number != avl.route_id -- WHEN the route number does NOT match
---                            THEN 
---                                CASE
---                                    WHEN avl.direction_id IS NOT NULL
---                                        THEN 2.1 -- AVL direction exists
---                                    ELSE 2.2 -- AVL direction does not exist
---                                END
---                        WHEN avl.route_id IS NULL -- WHERE there IS NO AVL match
---                            THEN 3
---                    END,
---                    abs_interval(avl.departure_dtm_pacific - orca.device_dtm_pacific) -- orca_avl_time_interval 
---                )
---            ) AS ranked_avl
---        FROM orca.v_boardings AS orca
---        LEFT JOIN agency.v_avl AS avl
---            ON avl.agency_id = orca.source_agency_id -- same agency
---            AND avl.vehicle_id = orca.coach_number  -- same vehicle
---            AND avl.stop_id = orca.stop_code  -- same stop
---            AND abs_interval(avl.departure_dtm_pacific - orca.device_dtm_pacific) <= INTERVAL '5 minutes' -- WITHIN 5 min INTERVAL
---        WHERE orca.txn_id = _txn_id
---    )
---    SELECT *
---    FROM get_avl_rec
---    INTO _avl_rec
---    WHERE ranked_avl = 1;
-
-
-
+    -- get trac data associated to orca txn
+        -- trac check code, trip id, and stop data for comparison later
     WITH get_trac_data AS (
         SELECT    
-              txn_id, trac_trip_id
+              txn_id
+            , trac_trip_id
             , gtfs.stop_id AS trac_stop_id
             , abs_interval(gtfs.departure_time - _orca_txn_rec.device_dtm_interval) AS trac_time_difference
             , gtfs.stop_location AS trac_stop_location
@@ -651,17 +569,15 @@ BEGIN
                   ) AS ranked
             FROM orca.v_boardings AS orca
             LEFT JOIN gtfs_test.v_gtfs_service_exceptions AS exc -- EXCEPTION service dates for the route/shape
-                ON orca.business_date = exc.date
+                ON  exc.date = orca.business_date
                 AND exc.trac_agency_id = _gtfs_rec.trac_agency_id
                 AND exc.route_id = _gtfs_rec.route_id
                 AND exc.feed_id = _gtfs_rec.feed_id
             LEFT JOIN gtfs_test.v_gtfs_trip_directions_corrected AS gtfs_td
-                ON     _gtfs_rec.feed_id = gtfs_td.feed_id
-                AND _gtfs_rec.route_id = gtfs_td.route_id
-                AND _gtfs_rec.trac_agency_id = gtfs_td.trac_agency_id
-                AND _orca_txn_rec.device_dtm_interval 
-                    BETWEEN gtfs_td.first_stop_time - INTERVAL '3 minutes' 
-                    AND gtfs_td.last_stop_time + INTERVAL '15 minutes'-- txn must be WITHIN the FIRST AND LAST stop time
+                ON  gtfs_td.feed_id = _gtfs_rec.feed_id
+                AND gtfs_td.route_id = _gtfs_rec.route_id
+                AND gtfs_td.trac_agency_id = _gtfs_rec.trac_agency_id 
+                AND _orca_txn_rec.device_dtm_interval BETWEEN gtfs_td.first_stop_time - INTERVAL '3 minutes' AND gtfs_td.last_stop_time + INTERVAL '15 minutes'-- txn must be WITHIN the FIRST AND LAST stop time
                 AND ( -- JOIN ON direction
                     (ARRAY[COALESCE(_orca_corrected_direction_id, orca.direction_id)] <@ gtfs_td.alt_direction_id 
                         AND _avl_rec.check_code != 1.2)
@@ -716,7 +632,7 @@ BEGIN
             WHERE orca.txn_id = _txn_id
         ) AS trip_ranked
         LEFT JOIN gtfs_test.v_gtfs_trip_stop_sequence AS gtfs
-            ON     gtfs.trip_id = trip_ranked.trac_trip_id
+            ON gtfs.trip_id = trip_ranked.trac_trip_id
             AND gtfs.route_id = _gtfs_rec.route_id
             AND gtfs.trac_agency_id = _gtfs_rec.trac_agency_id
             AND gtfs.feed_id = _gtfs_rec.feed_id
@@ -762,317 +678,317 @@ BEGIN
 
 
 
-    WITH gtfs_ranked AS (
-        SELECT DISTINCT 
-              orca.*
-            , gtfs.trip_id AS gtfs_trip_id
-            , gtfs.stop_location AS gtfs_stop_location
-            , abs_interval(gtfs.departure_time - _orca_txn_rec.device_dtm_interval) AS gtfs_time_difference
-            , ST_Distance(st_transform(orca.device_location, 32610), st_transform(gtfs.stop_location, 32610)) AS distance_gtfs_orca
-            , gtfs.alt_direction_id AS gtfs_alt_direction_id
-            , CASE 
-                WHEN (ARRAY[COALESCE(_orca_corrected_direction_id, orca.direction_id)] <@ gtfs.alt_direction_id)
-                    THEN 1.1 -- WHEN orca matched
-                WHEN (ARRAY[_avl_rec.direction_id] <@ gtfs.alt_direction_id)
-                    THEN 1.2 -- WHEN orca does not matched but avl matched
-                WHEN gtfs.alt_direction_id IS NOT NULL
-                    THEN 1.3 -- the stop serve the route but none of direction matched
-                WHEN gtfs.alt_direction_id IS NULL
-                    THEN 2  -- WHEN this orca stop does NOT serve this route AT all
-              END AS gtfs_check_code
-            , ROW_NUMBER() OVER (
-                PARTITION BY orca.txn_id
-                ORDER BY
-                      CASE 
-                        WHEN (ARRAY[COALESCE(_orca_corrected_direction_id, orca.direction_id)] <@ gtfs.alt_direction_id)
-                              OR (ARRAY[_avl_rec.direction_id] <@ gtfs.alt_direction_id)
-                            THEN 1 -- WHEN orca/avl direction matched
-                        WHEN gtfs.alt_direction_id IS NOT NULL
-                            THEN 2 -- the stop serve the route but none of direction matched
-                        WHEN gtfs.alt_direction_id IS NULL
-                            THEN 3 -- WHEN this orca stop does NOT serve this route AT all
-                      END ASC -- FIRST, ORDER BY the direction
-                    , abs_interval(gtfs.departure_time - _orca_txn_rec.device_dtm_interval) ASC -- THEN BY the time difference
-              ) AS gtfs_rank
-        FROM orca.v_boardings AS orca
-        LEFT JOIN gtfs_test.v_gtfs_service_exceptions AS exc -- EXCEPTION service dates for the route/shape
-            ON orca.business_date = exc.date
-            AND exc.trac_agency_id = _gtfs_rec.trac_agency_id
-            AND exc.route_id = _gtfs_rec.route_id
-            AND exc.feed_id = _gtfs_rec.feed_id
-        LEFT JOIN gtfs_test.v_gtfs_trip_stop_sequence AS gtfs
-            ON gtfs.stop_id = orca.stop_code -- JOIN ON stop id
-            AND gtfs.route_id = _gtfs_rec.route_id
-            AND gtfs.trac_agency_id = _gtfs_rec.trac_agency_id
-            AND gtfs.feed_id = _gtfs_rec.feed_id
-            AND 
-                CASE -- JOIN ON time OF txn time
-                    WHEN orca.device_mode_id = 10 OR orca.device_mode_id = 11 -- lightrail OR sounder
-                           THEN
-                               gtfs.departure_time 
-                               -- AFTER tap, allow upto 1 min TO GET TO the lightrail/sounder BY stairs/elevators
-                               BETWEEN _orca_txn_rec.device_dtm_interval - INTERVAL '1 minutes' 
-                               -- AFTER tap, might need TO wait upto 30 mins BEFORE the lightrail/sounder depart
-                               AND _orca_txn_rec.device_dtm_interval + INTERVAL '45 minutes' 
-                    ELSE -- bus
-                           gtfs.departure_time 
-                           BETWEEN _orca_txn_rec.device_dtm_interval - INTERVAL '2 minutes' -- bus arriving 2 minutes early from the schedule
-                           AND _orca_txn_rec.device_dtm_interval + INTERVAL '45 minutes' -- bus arriving 30 minutes late from the schedule
-                END
-            AND -- JOIN ON service day
-                CASE
-                    WHEN _orca_txn_rec.txn_dow = 0 -- SUNDAY
-                        THEN
-                            (gtfs.sunday = 1 AND exc.exception_type IS NULL)
-                            OR (gtfs.sunday = 1 AND exc.trip_id = gtfs.trip_id AND exc.exception_type != 2)
-                            OR (gtfs.sunday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)
-                            OR (gtfs.sunday IS NULL)
-                    WHEN _orca_txn_rec.txn_dow = 1 -- MONDAY
-                        THEN
-                            (gtfs.monday = 1 AND exc.exception_type IS NULL)
-                            OR (gtfs.monday = 1 AND exc.trip_id = gtfs.trip_id AND exc.exception_type != 2)
-                            OR (gtfs.monday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)
-                            OR (gtfs.monday IS NULL)
-                    WHEN _orca_txn_rec.txn_dow = 2 -- TUESDAY
-                        THEN
-                            (gtfs.tuesday = 1 AND exc.exception_type IS NULL)
-                            OR (gtfs.tuesday = 1 AND exc.trip_id = gtfs.trip_id AND exc.exception_type != 2)
-                            OR (gtfs.tuesday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)
-                            OR (gtfs.tuesday IS NULL)
-                    WHEN _orca_txn_rec.txn_dow = 3 -- WEDNESDAY
-                        THEN
-                            (gtfs.wednesday = 1 AND exc.exception_type IS NULL)
-                            OR (gtfs.wednesday = 1 AND exc.trip_id = gtfs.trip_id AND exc.exception_type != 2)
-                            OR (gtfs.wednesday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)
-                            OR (gtfs.wednesday IS NULL)
-                    WHEN _orca_txn_rec.txn_dow = 4 -- THURSDAY
-                        THEN
-                            (gtfs.thursday = 1 AND exc.exception_type IS NULL)
-                            OR (gtfs.thursday = 1 AND exc.trip_id = gtfs.trip_id AND exc.exception_type != 2)
-                            OR (gtfs.thursday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)
-                            OR (gtfs.thursday IS NULL)
-                    WHEN _orca_txn_rec.txn_dow = 5 -- FRIDAY
-                        THEN
-                            (gtfs.friday = 1 AND exc.exception_type IS NULL)
-                            OR (gtfs.friday = 1 AND exc.trip_id = gtfs.trip_id AND exc.exception_type != 2)
-                            OR (gtfs.friday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)
-                            OR (gtfs.friday IS NULL)
-                    WHEN _orca_txn_rec.txn_dow = 6 -- SATURDAY
-                        THEN
-                            (gtfs.saturday = 1 AND exc.exception_type IS NULL)
-                            OR (gtfs.saturday = 1 AND exc.trip_id = gtfs.trip_id AND exc.exception_type != 2)
-                            OR (gtfs.saturday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)  
-                            OR (gtfs.saturday IS NULL)
-                END
-        WHERE txn_id = _txn_id
-    )
-    SELECT 
-          gtfs_trip_id
-        , gtfs_check_code
-        , gtfs_time_difference
-        , gtfs_stop_location
-    INTO 
-          _gtfs_trip_id
-        , _gtfs_check_code
-        , _gtfs_time_difference
-        , _gtfs_stop_location
-    FROM gtfs_ranked
-    WHERE gtfs_rank = 1
-    AND txn_id = _txn_id;
+--    WITH gtfs_ranked AS (
+--        SELECT DISTINCT 
+--              orca.*
+--            , gtfs.trip_id AS gtfs_trip_id
+--            , gtfs.stop_location AS gtfs_stop_location
+--            , abs_interval(gtfs.departure_time - _orca_txn_rec.device_dtm_interval) AS gtfs_time_difference
+--            , ST_Distance(st_transform(orca.device_location, 32610), st_transform(gtfs.stop_location, 32610)) AS distance_gtfs_orca
+--            , gtfs.alt_direction_id AS gtfs_alt_direction_id
+--            , CASE 
+--                WHEN (ARRAY[COALESCE(_orca_corrected_direction_id, orca.direction_id)] <@ gtfs.alt_direction_id)
+--                    THEN 1.1 -- WHEN orca matched
+--                WHEN (ARRAY[_avl_rec.direction_id] <@ gtfs.alt_direction_id)
+--                    THEN 1.2 -- WHEN orca does not matched but avl matched
+--                WHEN gtfs.alt_direction_id IS NOT NULL
+--                    THEN 1.3 -- the stop serve the route but none of direction matched
+--                WHEN gtfs.alt_direction_id IS NULL
+--                    THEN 2  -- WHEN this orca stop does NOT serve this route AT all
+--              END AS gtfs_check_code
+--            , ROW_NUMBER() OVER (
+--                PARTITION BY orca.txn_id
+--                ORDER BY
+--                      CASE 
+--                        WHEN (ARRAY[COALESCE(_orca_corrected_direction_id, orca.direction_id)] <@ gtfs.alt_direction_id)
+--                              OR (ARRAY[_avl_rec.direction_id] <@ gtfs.alt_direction_id)
+--                            THEN 1 -- WHEN orca/avl direction matched
+--                        WHEN gtfs.alt_direction_id IS NOT NULL
+--                            THEN 2 -- the stop serve the route but none of direction matched
+--                        WHEN gtfs.alt_direction_id IS NULL
+--                            THEN 3 -- WHEN this orca stop does NOT serve this route AT all
+--                      END ASC -- FIRST, ORDER BY the direction
+--                    , abs_interval(gtfs.departure_time - _orca_txn_rec.device_dtm_interval) ASC -- THEN BY the time difference
+--              ) AS gtfs_rank
+--        FROM orca.v_boardings AS orca
+--        LEFT JOIN gtfs_test.v_gtfs_service_exceptions AS exc -- EXCEPTION service dates for the route/shape
+--            ON orca.business_date = exc.date
+--            AND exc.trac_agency_id = _gtfs_rec.trac_agency_id
+--            AND exc.route_id = _gtfs_rec.route_id
+--            AND exc.feed_id = _gtfs_rec.feed_id
+--        LEFT JOIN gtfs_test.v_gtfs_trip_stop_sequence AS gtfs
+--            ON gtfs.stop_id = orca.stop_code -- JOIN ON stop id
+--            AND gtfs.route_id = _gtfs_rec.route_id
+--            AND gtfs.trac_agency_id = _gtfs_rec.trac_agency_id
+--            AND gtfs.feed_id = _gtfs_rec.feed_id
+--            AND 
+--                CASE -- JOIN ON time OF txn time
+--                    WHEN orca.device_mode_id = 10 OR orca.device_mode_id = 11 -- lightrail OR sounder
+--                           THEN
+--                               gtfs.departure_time 
+--                               -- AFTER tap, allow upto 1 min TO GET TO the lightrail/sounder BY stairs/elevators
+--                               BETWEEN _orca_txn_rec.device_dtm_interval - INTERVAL '1 minutes' 
+--                               -- AFTER tap, might need TO wait upto 30 mins BEFORE the lightrail/sounder depart
+--                               AND _orca_txn_rec.device_dtm_interval + INTERVAL '45 minutes' 
+--                    ELSE -- bus
+--                           gtfs.departure_time 
+--                           BETWEEN _orca_txn_rec.device_dtm_interval - INTERVAL '2 minutes' -- bus arriving 2 minutes early from the schedule
+--                           AND _orca_txn_rec.device_dtm_interval + INTERVAL '45 minutes' -- bus arriving 30 minutes late from the schedule
+--                END
+--            AND -- JOIN ON service day
+--                CASE
+--                    WHEN _orca_txn_rec.txn_dow = 0 -- SUNDAY
+--                        THEN
+--                            (gtfs.sunday = 1 AND exc.exception_type IS NULL)
+--                            OR (gtfs.sunday = 1 AND exc.trip_id = gtfs.trip_id AND exc.exception_type != 2)
+--                            OR (gtfs.sunday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)
+--                            OR (gtfs.sunday IS NULL)
+--                    WHEN _orca_txn_rec.txn_dow = 1 -- MONDAY
+--                        THEN
+--                            (gtfs.monday = 1 AND exc.exception_type IS NULL)
+--                            OR (gtfs.monday = 1 AND exc.trip_id = gtfs.trip_id AND exc.exception_type != 2)
+--                            OR (gtfs.monday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)
+--                            OR (gtfs.monday IS NULL)
+--                    WHEN _orca_txn_rec.txn_dow = 2 -- TUESDAY
+--                        THEN
+--                            (gtfs.tuesday = 1 AND exc.exception_type IS NULL)
+--                            OR (gtfs.tuesday = 1 AND exc.trip_id = gtfs.trip_id AND exc.exception_type != 2)
+--                            OR (gtfs.tuesday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)
+--                            OR (gtfs.tuesday IS NULL)
+--                    WHEN _orca_txn_rec.txn_dow = 3 -- WEDNESDAY
+--                        THEN
+--                            (gtfs.wednesday = 1 AND exc.exception_type IS NULL)
+--                            OR (gtfs.wednesday = 1 AND exc.trip_id = gtfs.trip_id AND exc.exception_type != 2)
+--                            OR (gtfs.wednesday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)
+--                            OR (gtfs.wednesday IS NULL)
+--                    WHEN _orca_txn_rec.txn_dow = 4 -- THURSDAY
+--                        THEN
+--                            (gtfs.thursday = 1 AND exc.exception_type IS NULL)
+--                            OR (gtfs.thursday = 1 AND exc.trip_id = gtfs.trip_id AND exc.exception_type != 2)
+--                            OR (gtfs.thursday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)
+--                            OR (gtfs.thursday IS NULL)
+--                    WHEN _orca_txn_rec.txn_dow = 5 -- FRIDAY
+--                        THEN
+--                            (gtfs.friday = 1 AND exc.exception_type IS NULL)
+--                            OR (gtfs.friday = 1 AND exc.trip_id = gtfs.trip_id AND exc.exception_type != 2)
+--                            OR (gtfs.friday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)
+--                            OR (gtfs.friday IS NULL)
+--                    WHEN _orca_txn_rec.txn_dow = 6 -- SATURDAY
+--                        THEN
+--                            (gtfs.saturday = 1 AND exc.exception_type IS NULL)
+--                            OR (gtfs.saturday = 1 AND exc.trip_id = gtfs.trip_id AND exc.exception_type != 2)
+--                            OR (gtfs.saturday = 0 AND exc.trip_id = gtfs.trip_id AND exc.exception_type = 1)  
+--                            OR (gtfs.saturday IS NULL)
+--                END
+--        WHERE txn_id = _txn_id
+--    )
+--    SELECT 
+--          gtfs_trip_id
+--        , gtfs_check_code
+--        , gtfs_time_difference
+--        , gtfs_stop_location
+--    INTO 
+--          _gtfs_trip_id
+--        , _gtfs_check_code
+--        , _gtfs_time_difference
+--        , _gtfs_stop_location
+--    FROM gtfs_ranked
+--    WHERE gtfs_rank = 1
+--    AND txn_id = _txn_id;
 
 
 
 
 
 
-    WITH get_final_data AS (
-        SELECT 
-              txn_id
-            , CASE
-                WHEN _avl_check_code = 2.1 OR _avl_check_code = 2.2 OR (_trac_check_code = 4 AND _gtfs_check_code = 2)
-                    THEN NULL -- cant locate
-                WHEN _gtfs_check_code = 1.1 -- orca-orca
-                    THEN _gtfs_trip_id
-                WHEN _gtfs_check_code = 1.2 -- avl-orca
-                    THEN _gtfs_trip_id
-                WHEN _gtfs_check_code = 2 -- orca-trac
-                    THEN _trac_trip_id
-                WHEN (_avl_check_code < 2 AND _gtfs_check_code = 1.3) OR (_avl_check_code = 3 AND _trac_check_code = 4 AND _gtfs_check_code = 1.3)
-                    THEN _gtfs_trip_id --'gtfs'
-                WHEN _avl_check_code = 3 AND _trac_check_code = 2 AND _gtfs_check_code = 1.3 
-                    THEN 
-                        CASE 
-                            WHEN _gtfs_time_difference < _trac_time_difference -- gtfs-orca
-                                THEN _gtfs_trip_id --'gtfs'
-                            WHEN _gtfs_time_difference >= _trac_time_difference -- orca-trac
-                                THEN _trac_trip_id
-                            ELSE '-99' -- extra case, this IS FOR double checking
-                        END
-              END AS trip_id
-            , CASE
-                WHEN _avl_check_code = 2.1 OR _avl_check_code = 2.2 OR (_trac_check_code = 4 AND _gtfs_check_code = 2)
-                    THEN NULL -- cant locate
-                WHEN _gtfs_check_code = 1.1 -- orca-orca
-                    THEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id)
-                WHEN _gtfs_check_code = 1.2 -- avl-orca
-                    THEN _avl_rec.direction_id
-                WHEN _gtfs_check_code = 2 -- orca-trac
-                    THEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id)
-                WHEN (_avl_check_code < 2 AND _gtfs_check_code = 1.3) OR (_avl_check_code = 3 AND _trac_check_code = 4 AND _gtfs_check_code = 1.3)
-                    THEN 
-                        CASE 
-                            WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 4 
-                                THEN 5
-                            WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 5 
-                                THEN 4
-                            WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 6 
-                                THEN 7
-                            WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 7 
-                                THEN 6
-                        END
-                WHEN _avl_check_code = 3 AND _trac_check_code = 2 AND _gtfs_check_code = 1.3 -- other-other
-                    THEN 
-                        CASE 
-                            WHEN _gtfs_time_difference < _trac_time_difference
-                                THEN 
-                                    CASE -- gtfs-orca
-                                        WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 4 THEN 5
-                                        WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 5 THEN 4
-                                        WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 6 THEN 7
-                                        WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 7 THEN 6
-                                    END 
-                            WHEN _gtfs_time_difference >= _trac_time_difference
-                                THEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) -- orca-trac
-                            ELSE -99 -- extra case
-                        END
-                END AS direction_final
-            , CASE
-                WHEN _avl_check_code = 2.1 OR _avl_check_code = 2.2 OR (_trac_check_code = 4 AND _gtfs_check_code = 2)
-                    THEN -1 -- cant locate
-                WHEN _gtfs_check_code = 1.1 -- orca-orca
-                    THEN 
-                        CASE -- either orca updated direction, OR orca original !!
-                            WHEN _orca_corrected_direction_id IS NOT NULL 
-                                THEN 2 -- 'orca updated'
-                            ELSE 1 -- 'orca'
-                        END
-                WHEN _gtfs_check_code = 1.2 -- avl-orca
-                    THEN 3 -- avl
-                WHEN _gtfs_check_code = 2 -- orca-trac
-                    THEN 
-                        CASE 
-                            WHEN _orca_corrected_direction_id IS NOT NULL 
-                                THEN 2 --'orca updated'
-                            ELSE 1 --'orca'
-                        END
-                WHEN (_avl_check_code < 2 AND _gtfs_check_code = 1.3) OR (_avl_check_code = 3 AND _trac_check_code = 4 AND _gtfs_check_code = 1.3)
-                        THEN 4 --'gtfs'
-                WHEN _avl_check_code = 3 AND _trac_check_code = 2 AND _gtfs_check_code = 1.3 
-                    THEN 
-                        CASE 
-                            WHEN _gtfs_time_difference < _trac_time_difference -- gtfs-orca
-                                THEN 4 --'gtfs'
-                            WHEN _gtfs_time_difference >= _trac_time_difference -- orca-trac
-                                THEN 
-                                    CASE -- either orca updated direction, OR orca original !!
-                                        WHEN _orca_corrected_direction_id IS NOT NULL 
-                                            THEN 2 --'orca updated'
-                                        ELSE 1 --'orca'
-                                    END
-                            ELSE -99 -- extra case, this IS FOR double checking
-                        END
-              END AS direction_note
-            , CASE
-                WHEN _avl_check_code = 2.1 OR _avl_check_code = 2.2 OR (_trac_check_code = 4  AND _gtfs_check_code = 2)
-                    THEN NULL -- cant locate
-                WHEN _gtfs_check_code = 1.1 -- orca-orca
-                    THEN stop_code
-                WHEN _gtfs_check_code = 1.2 -- avl-orca
-                    THEN stop_code
-                WHEN _gtfs_check_code = 2 -- orca-trac
-                    THEN _trac_stop_id
-                WHEN (_avl_check_code < 2 AND _gtfs_check_code = 1.3) OR (_avl_check_code = 3 AND _trac_check_code = 4 AND _gtfs_check_code = 1.3)
-                    THEN stop_code
-                WHEN _avl_check_code = 3 AND _trac_check_code = 2 AND _gtfs_check_code = 1.3 -- other-other
-                    THEN 
-                        CASE 
-                            WHEN _gtfs_time_difference < _trac_time_difference
-                                THEN stop_code -- gtfs-orca
-                            WHEN _gtfs_time_difference >= _trac_time_difference
-                                THEN _trac_stop_id -- orca-trac
-                            ELSE '-99' -- extra case, this IS FOR doublechecking
-                        END
-              END AS stop_final
-            , CASE
-                WHEN _avl_check_code = 2.1 OR _avl_check_code = 2.2 OR (_trac_check_code = 4 AND _gtfs_check_code = 2)
-                    THEN -1 -- cant locate
-                WHEN _gtfs_check_code = 1.1 -- orca-orca
-                    THEN 1 -- orca
-                WHEN _gtfs_check_code = 1.2 -- avl-orca
-                    THEN 1 -- orca
-                WHEN _gtfs_check_code = 2 -- orca-trac
-                    THEN 5 -- trac
-                WHEN (_avl_check_code < 2 AND _gtfs_check_code = 1.3) OR (_avl_check_code = 3 AND _trac_check_code = 4 AND _gtfs_check_code = 1.3)
-                    THEN 1 -- orca
-                WHEN _avl_check_code = 3 AND _trac_check_code = 2 AND _gtfs_check_code = 1.3
-                    THEN 
-                        CASE 
-                            WHEN _gtfs_time_difference < _trac_time_difference -- gtfs-orca
-                                THEN 1 -- orca
-                            WHEN _gtfs_time_difference >= _trac_time_difference  -- orca-trac
-                                THEN 5 -- trac
-                            ELSE -99 -- this IS FOR doublechecking
-                        END
-              END AS stop_note
-            , CASE
-                WHEN _avl_check_code = 2.1 OR _avl_check_code = 2.2 OR (_trac_check_code = 4AND _gtfs_check_code = 2)
-                    THEN NULL -- cant locate
-                WHEN _gtfs_check_code = 1.1 -- orca-orca
-                    THEN _gtfs_stop_location
-                WHEN _gtfs_check_code = 1.2 -- avl-orca
-                    THEN _gtfs_stop_location
-                WHEN _gtfs_check_code = 2 -- orca-trac
-                    THEN _trac_stop_location
-                WHEN (_avl_check_code < 2 AND _gtfs_check_code = 1.3) OR (_avl_check_code = 3 AND _trac_check_code = 4 AND _gtfs_check_code = 1.3)
-                    THEN _gtfs_stop_location
-                WHEN _avl_check_code = 3 AND _trac_check_code = 2 AND _gtfs_check_code = 1.3 -- other-other
-                    THEN 
-                        CASE 
-                            WHEN _gtfs_time_difference < _trac_time_difference
-                                THEN _gtfs_stop_location -- gtfs-orca
-                            WHEN _gtfs_time_difference >= _trac_time_difference
-                                THEN _trac_stop_location -- orca-trac
-                            ELSE NULL -- extra case
-                        END
-              END AS stop_location
-        FROM orca.v_boardings
-    )
-    SELECT 
-          trip_id
-        , direction_final
-        , direction_note
-        , stop_final
-        , stop_note
-        , stop_location
-    INTO 
-          _final_trip_id
-        , _direction_final
-        , _direction_note
-        , _stop_final
-        , _stop_note
-        , _stop_location
-    FROM get_final_data
-    WHERE txn_id = _txn_id;
+--    WITH get_final_data AS (
+--        SELECT 
+--              txn_id
+--            , CASE
+--                WHEN _avl_check_code = 2.1 OR _avl_check_code = 2.2 OR (_trac_check_code = 4 AND _gtfs_check_code = 2)
+--                    THEN NULL -- cant locate
+--                WHEN _gtfs_check_code = 1.1 -- orca-orca
+--                    THEN _gtfs_trip_id
+--                WHEN _gtfs_check_code = 1.2 -- avl-orca
+--                    THEN _gtfs_trip_id
+--                WHEN _gtfs_check_code = 2 -- orca-trac
+--                    THEN _trac_trip_id
+--                WHEN (_avl_check_code < 2 AND _gtfs_check_code = 1.3) OR (_avl_check_code = 3 AND _trac_check_code = 4 AND _gtfs_check_code = 1.3)
+--                    THEN _gtfs_trip_id --'gtfs'
+--                WHEN _avl_check_code = 3 AND _trac_check_code = 2 AND _gtfs_check_code = 1.3 
+--                    THEN 
+--                        CASE 
+--                            WHEN _gtfs_time_difference < _trac_time_difference -- gtfs-orca
+--                                THEN _gtfs_trip_id --'gtfs'
+--                            WHEN _gtfs_time_difference >= _trac_time_difference -- orca-trac
+--                                THEN _trac_trip_id
+--                            ELSE '-99' -- extra case, this IS FOR double checking
+--                        END
+--              END AS trip_id
+--            , CASE
+--                WHEN _avl_check_code = 2.1 OR _avl_check_code = 2.2 OR (_trac_check_code = 4 AND _gtfs_check_code = 2)
+--                    THEN NULL -- cant locate
+--                WHEN _gtfs_check_code = 1.1 -- orca-orca
+--                    THEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id)
+--                WHEN _gtfs_check_code = 1.2 -- avl-orca
+--                    THEN _avl_rec.direction_id
+--                WHEN _gtfs_check_code = 2 -- orca-trac
+--                    THEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id)
+--                WHEN (_avl_check_code < 2 AND _gtfs_check_code = 1.3) OR (_avl_check_code = 3 AND _trac_check_code = 4 AND _gtfs_check_code = 1.3)
+--                    THEN 
+--                        CASE 
+--                            WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 4 
+--                                THEN 5
+--                            WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 5 
+--                                THEN 4
+--                            WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 6 
+--                                THEN 7
+--                            WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 7 
+--                                THEN 6
+--                        END
+--                WHEN _avl_check_code = 3 AND _trac_check_code = 2 AND _gtfs_check_code = 1.3 -- other-other
+--                    THEN 
+--                        CASE 
+--                            WHEN _gtfs_time_difference < _trac_time_difference
+--                                THEN 
+--                                    CASE -- gtfs-orca
+--                                        WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 4 THEN 5
+--                                        WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 5 THEN 4
+--                                        WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 6 THEN 7
+--                                        WHEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) = 7 THEN 6
+--                                    END 
+--                            WHEN _gtfs_time_difference >= _trac_time_difference
+--                                THEN COALESCE(_orca_corrected_direction_id, _orca_txn_rec.direction_id) -- orca-trac
+--                            ELSE -99 -- extra case
+--                        END
+--                END AS direction_final
+--            , CASE
+--                WHEN _avl_check_code = 2.1 OR _avl_check_code = 2.2 OR (_trac_check_code = 4 AND _gtfs_check_code = 2)
+--                    THEN -1 -- cant locate
+--                WHEN _gtfs_check_code = 1.1 -- orca-orca
+--                    THEN 
+--                        CASE -- either orca updated direction, OR orca original !!
+--                            WHEN _orca_corrected_direction_id IS NOT NULL 
+--                                THEN 2 -- 'orca updated'
+--                            ELSE 1 -- 'orca'
+--                        END
+--                WHEN _gtfs_check_code = 1.2 -- avl-orca
+--                    THEN 3 -- avl
+--                WHEN _gtfs_check_code = 2 -- orca-trac
+--                    THEN 
+--                        CASE 
+--                            WHEN _orca_corrected_direction_id IS NOT NULL 
+--                                THEN 2 --'orca updated'
+--                            ELSE 1 --'orca'
+--                        END
+--                WHEN (_avl_check_code < 2 AND _gtfs_check_code = 1.3) OR (_avl_check_code = 3 AND _trac_check_code = 4 AND _gtfs_check_code = 1.3)
+--                        THEN 4 --'gtfs'
+--                WHEN _avl_check_code = 3 AND _trac_check_code = 2 AND _gtfs_check_code = 1.3 
+--                    THEN 
+--                        CASE 
+--                            WHEN _gtfs_time_difference < _trac_time_difference -- gtfs-orca
+--                                THEN 4 --'gtfs'
+--                            WHEN _gtfs_time_difference >= _trac_time_difference -- orca-trac
+--                                THEN 
+--                                    CASE -- either orca updated direction, OR orca original !!
+--                                        WHEN _orca_corrected_direction_id IS NOT NULL 
+--                                            THEN 2 --'orca updated'
+--                                        ELSE 1 --'orca'
+--                                    END
+--                            ELSE -99 -- extra case, this IS FOR double checking
+--                        END
+--              END AS direction_note
+--            , CASE
+--                WHEN _avl_check_code = 2.1 OR _avl_check_code = 2.2 OR (_trac_check_code = 4  AND _gtfs_check_code = 2)
+--                    THEN NULL -- cant locate
+--                WHEN _gtfs_check_code = 1.1 -- orca-orca
+--                    THEN stop_code
+--                WHEN _gtfs_check_code = 1.2 -- avl-orca
+--                    THEN stop_code
+--                WHEN _gtfs_check_code = 2 -- orca-trac
+--                    THEN _trac_stop_id
+--                WHEN (_avl_check_code < 2 AND _gtfs_check_code = 1.3) OR (_avl_check_code = 3 AND _trac_check_code = 4 AND _gtfs_check_code = 1.3)
+--                    THEN stop_code
+--                WHEN _avl_check_code = 3 AND _trac_check_code = 2 AND _gtfs_check_code = 1.3 -- other-other
+--                    THEN 
+--                        CASE 
+--                            WHEN _gtfs_time_difference < _trac_time_difference
+--                                THEN stop_code -- gtfs-orca
+--                            WHEN _gtfs_time_difference >= _trac_time_difference
+--                                THEN _trac_stop_id -- orca-trac
+--                            ELSE '-99' -- extra case, this IS FOR doublechecking
+--                        END
+--              END AS stop_final
+--            , CASE
+--                WHEN _avl_check_code = 2.1 OR _avl_check_code = 2.2 OR (_trac_check_code = 4 AND _gtfs_check_code = 2)
+--                    THEN -1 -- cant locate
+--                WHEN _gtfs_check_code = 1.1 -- orca-orca
+--                    THEN 1 -- orca
+--                WHEN _gtfs_check_code = 1.2 -- avl-orca
+--                    THEN 1 -- orca
+--                WHEN _gtfs_check_code = 2 -- orca-trac
+--                    THEN 5 -- trac
+--                WHEN (_avl_check_code < 2 AND _gtfs_check_code = 1.3) OR (_avl_check_code = 3 AND _trac_check_code = 4 AND _gtfs_check_code = 1.3)
+--                    THEN 1 -- orca
+--                WHEN _avl_check_code = 3 AND _trac_check_code = 2 AND _gtfs_check_code = 1.3
+--                    THEN 
+--                        CASE 
+--                            WHEN _gtfs_time_difference < _trac_time_difference -- gtfs-orca
+--                                THEN 1 -- orca
+--                            WHEN _gtfs_time_difference >= _trac_time_difference  -- orca-trac
+--                                THEN 5 -- trac
+--                            ELSE -99 -- this IS FOR doublechecking
+--                        END
+--              END AS stop_note
+--            , CASE
+--                WHEN _avl_check_code = 2.1 OR _avl_check_code = 2.2 OR (_trac_check_code = 4 AND _gtfs_check_code = 2)
+--                    THEN NULL -- cant locate
+--                WHEN _gtfs_check_code = 1.1 -- orca-orca
+--                    THEN _gtfs_stop_location
+--                WHEN _gtfs_check_code = 1.2 -- avl-orca
+--                    THEN _gtfs_stop_location
+--                WHEN _gtfs_check_code = 2 -- orca-trac
+--                    THEN _trac_stop_location
+--                WHEN (_avl_check_code < 2 AND _gtfs_check_code = 1.3) OR (_avl_check_code = 3 AND _trac_check_code = 4 AND _gtfs_check_code = 1.3)
+--                    THEN _gtfs_stop_location
+--                WHEN _avl_check_code = 3 AND _trac_check_code = 2 AND _gtfs_check_code = 1.3 -- other-other
+--                    THEN 
+--                        CASE 
+--                            WHEN _gtfs_time_difference < _trac_time_difference
+--                                THEN _gtfs_stop_location -- gtfs-orca
+--                            WHEN _gtfs_time_difference >= _trac_time_difference
+--                                THEN _trac_stop_location -- orca-trac
+--                            ELSE NULL -- extra case
+--                        END
+--              END AS stop_location
+--        FROM orca.v_boardings
+--    )
+--    SELECT 
+--          trip_id
+--        , direction_final
+--        , direction_note
+--        , stop_final
+--        , stop_note
+--        , stop_location
+--    INTO 
+--          _final_trip_id
+--        , _direction_final
+--        , _direction_note
+--        , _stop_final
+--        , _stop_note
+--        , _stop_location
+--    FROM get_final_data
+--    WHERE txn_id = _txn_id;
     
 
 
-    INSERT INTO gtfs_test.dummy VALUES (
-          _trac_check_code
-        , _trac_trip_id
-        , _trac_time_difference
-        , _trac_stop_id
-        , _trac_stop_location
-    );
+--    INSERT INTO gtfs_test.dummy VALUES (
+--          _trac_check_code
+--        , _trac_trip_id
+--        , _trac_time_difference
+--        , _trac_stop_id
+--        , _trac_stop_location
+--    );
 
     INSERT INTO gtfs_test.test_final_table VALUES (
           _txn_id
@@ -1098,103 +1014,6 @@ BEGIN
     
 END;
 $$;
-
-
-
-
-
--- SETUP:
-    
-        -- 1.) create a view that gets the latest feed with unique start and end dates for all the routes for each agency from gtfs data 
-            -- USING:
-                -- feeds, routes, trips, and calendar gtfs tables
-
-        -- 2.) using view from step 1, append gtfs feed_id, route_id, and trac_agency_id to the orca transaction
-            -- USING: 
-                -- lookup tables to join on similar values
-            -- CONDITIONS: 
-                -- orca device location or stop code not null
-
-        -- 3.) for all trips in a route for gtfs data, identify cardinal direction to use over orca's direction_id, append service day data from gtfs 
-                -- calendar
-            -- USING:
-                -- view from step 1, gtfs trips, stops, stop_times, and calendar
-
-        -- 4.) update step 3 with avl direction id, adding either 1 (inbound) or 2 (outbound) to cardinal direction array
-            -- CONDITION:
-                -- agency_id = 6, pierce_transit
-            -- CREATE:
-                -- index 
-
-        -- 5.) bring all the variables together for every stop
-            -- USING:
-                -- step 4: route_id, t.trac_agency_id, t.trip_id, t.shape_id, t.direction_id, t.alt_direction_id
-                -- step 1: start and end dates
-                -- gtfs stops, stop_times, and calendar
-            -- CEATE: 
-                -- indexes
-
-        -- 6.) bring together variables for service dates and exception types for 
-            -- USING: 
-                -- view from step 1, trips, calendar, and calendar dates
-
-        -- 7.) create function
-
-        -- 8.) if transaction has direction_id = 3 (unknown), then assume the direction using transaction with same route_number, device_id, coach_number
-            -- and business date that are within 30 min from each other
-
-        -- 9.) AVL data checks
-    
-        -- get all the stops for each unique combination of route_id, direction (in or outbound) and alt_direc
-    
-        -- for when direction id = 3 meaning unknown, creates a view of these taps with approximated direction id defined by comparing to taps of the 
-        -- same parameters
-    
-        -- join orca and avl on agency, vehicle_id, orca_stop_id, within 5 minutes ALSO, correct the cases where direction_id = 3
-    
-        -- chooses the best join based on ranking / quality and if their are 2 or more of the same quality for the same tap, then we pick the one with 
-        -- the lowest time interval
-        -- now, only select the first case
-    
-    -- ADDITIONS:
-    
-        -- append feed id and route id and trac agency id to orca data
-    
-        -- join ORCA with GTFS based on route name and direction
-            -- also, for the avl_check_code = 1.2, we will use the avl_direction instead of orca's
-            -- we join orca with gtfs based on departure time and device dtm pacific when the business date is in service, checking for exception dates
-        -- we define the trac_check_code as:
-            -- (1) when orca's stop_code equals to trac's stop_id
-            -- (2) when orca's stop_code NOT equals to trac's stop_id
-            -- (3) when orca's stop_code is NULL
-            -- (4) when trac's stop_id is NULL --> no route/direction matched
-    
-        -- join gtfs with orca route_name and stop_code
-        -- gtfs_check_code: check if the stops serve the route in this specified orca_direction
-            -- Case 1: Where this stop_code do serve this route:
-                -- (1.1) if orca direction is contained within gtfs_combined_direction
-                -- (1.2) if orca direction NOT contained within gtfs_combined_direction
-                --             BUT AVL is 
-                -- (1.3) GTFS does not agree to both orca AND avl OR avl is null 
-            -- Case 2: Where this stop_code do NOT serve this route -- No GTFS matched:
-                -- (2) 
-    
-    -- boarding final table
-    
-    
-    -- next borading
-    
-        -- if light rail OR sounder:
-            -- if there is an alight_txn_id in v_linked_transactions:
-                -- ?verify that orca.transactions stop_id is along gtfs route?
-                -- use orca.transactions stop_id and device_dtm_pacific for alighting info
-                -- also get disance from stop to next boarding stop
-             -- if no alight_txn_id: this becomes like the bus tapoff estimate
-                -- use gtfs data to get next light rail stop within 1/3 mile of next boarding
-        -- if bus and route not 44444 or 22222:
-            -- use next boarding stop location to find any stops along current route within 1/3 mile
-        -- if bus and route 44444 or 22222:
-            -- use process written on paper
 
 
 --DROP TABLE gtfs_test.dummy
