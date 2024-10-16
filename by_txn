@@ -58,7 +58,6 @@
 --    WHERE route_rank = 1
 --);
 
-
 --DROP VIEW gtfs_test.v_gtfs_trip_directions
 -- list of all trips with classified cardinal direction, "alt trip id", as arrays of integers 
     -- cardinal direction identified by subtracting the last stop in the trip from the first in both lat and lon directions
@@ -1016,19 +1015,6 @@ END;
 $$;
 
 
---DROP TABLE gtfs_test.dummy
---
---CREATE TABLE gtfs_test.dummy (
---    _trac_check_code INT,
---    _trac_trip_id TEXT,
---    _trac_time_difference INTERVAL,
---    _trac_stop_id TEXT,
---    _trac_stop_location geometry
---);
---
---SELECT * FROM gtfs_test.dummy
-
-
 --CREATE TABLE gtfs_test.test_final_table(
 --     txn_id INT,
 --    coach_number TEXT, 
@@ -1049,10 +1035,9 @@ $$;
 --    stop_note INT, 
 --    stop_location geometry
 --);
-
 -- DROP TABLE gtfs_test.test_final_table
 
-
+-- SELECT * FROM _test.boarding_action_final_april23_20240413 ORDER BY RANDOM()LIMIT 10
 
 -- CALL gtfs_test.do_a_thing(209009706);
 -- CALL gtfs_test.do_a_thing(210597644);
@@ -1065,10 +1050,6 @@ $$;
 -- CALL gtfs_test.do_a_thing(213907462);
 -- CALL gtfs_test.do_a_thing(200595486);
 
-
 -- SELECT * FROM gtfs_test.test_final_table;
 
 -- TRUNCATE gtfs_test.test_final_table
-
-
--- SELECT * FROM _test.boarding_action_final_april23_20240413 ORDER BY RANDOM()LIMIT 10
